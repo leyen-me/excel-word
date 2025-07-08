@@ -1,5 +1,9 @@
 # python 3.10.8
+# pyinstaller
 
 openpyxl==3.1.5
 python-docx==1.2.0
-xlrd==1.2.0
+pyexcel==0.7.3
+pyexcel-io==0.6.7
+pyexcel-xls==0.7.1
+pyexcel-xlsx==0.6.1
