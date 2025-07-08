@@ -1,2 +1,5 @@
-openpyxl
-python-docx
+# python 3.10.8
+
+openpyxl==3.1.5
+python-docx==1.2.0
+xlrd==1.2.0
