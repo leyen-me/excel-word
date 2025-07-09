@@ -47,22 +47,69 @@ excel_folder = os.path.join(BASE_DIR, 'assets')
 word_template_path = os.path.join(BASE_DIR, 'template', 'temp.docx')
 output_folder = os.path.join(BASE_DIR, 'output')
 
+def gen_cells_row(start_col, end_col, row):
+    def col_range(start, end):
+        for c in range(ord(start), ord(end) + 1):
+            yield chr(c)
+    return [f"{col}{row}" for col in col_range(start_col, end_col)]
+
+def gen_cells(col, start_row, end_row):
+    return [f"{col}{row}" for row in range(start_row, end_row + 1)]
+
 fields = {
     '工程部位': 'R10',
     '设计强度等级': 'J15',
     '墩柱': 'A21',
-    '测区回弹代表值R1': 'S21',
-    '测区回弹代表值R2': 'S22',
-    '测区声速代表值1': 'Z21',
-    '测区声速代表值2': 'Z22',
+    '测区平均值': gen_cells('S', 21, 30),
+    '测区声速代表值': gen_cells('Z', 21, 30),
     '平测声速':'Z16',
-    '修正为对测声速1':'AA21',
-    '修正为对测声速2':'AA21',
-    '测区强度代表值1':'AB21',
-    '测区强度代表值2':'AB22',
+    '修正为对测声速': gen_cells('AA', 21, 30),
+    '测区强度代表值': gen_cells('AB', 21, 30),
     '构件强度推定值': 'AD21',
-    '设计抗压强度等级': 'J15'
+    '设计抗压强度等级': 'J15',
+    '标准差': 'AC21',
+    '平均值': gen_cells('AB', 21, 30)
 }
+
+decimal_places_map = {
+    '测区平均值': 1,
+    '测区声速代表值': 2,
+    '修正为对测声速': 2,
+    '测区强度代表值': 1,
+    '平测声速': 3,
+    '构件强度推定值': 1,
+    '标准差': 3,
+    '平均值': 1
+}
+
+def extract_cell_values(sheet, cell_ref):
+    if isinstance(cell_ref, str) and ':' in cell_ref:
+        # 区间
+        cells = sheet[cell_ref]
+        # cells 可能是二维的，需展开
+        return [cell.value for row in cells for cell in row]
+    elif isinstance(cell_ref, list):
+        return [sheet[c].value for c in cell_ref]
+    else:
+        return sheet[cell_ref].value
+
+def format_value_by_rule(key, value):
+    rule = decimal_places_map.get(key)
+    if key == '平测声速':
+        if value == '/' or value == '／':
+            return 1
+        if rule and value not in (None, '', ' '):
+            return f"{float(value):.{rule}f}"
+        return value
+    if isinstance(value, list):
+        return [
+            f"{float(v):.{rule}f}" if rule and v not in (None, '', ' ') else v
+            for i, v in enumerate(value)
+        ]
+    else:
+        if rule and value not in (None, '', ' '):
+            return f"{float(value):.{rule}f}"
+        return value
 
 def trans_xls_to_xlsx(folder):
     for file in os.listdir(folder):
@@ -81,28 +128,72 @@ def extract_data_from_excel(excel_path):
         logger.info(f"处理Sheet: {sheet.title}")
         sheet_data = {}
         for key, cell in fields.items():
-            value = sheet[cell].value
+            value = extract_cell_values(sheet, cell)
+            # 对“平均值”特殊处理
+            if key == '平均值':
+                # 过滤掉空值和非数字
+                nums = [float(v) for v in value if v not in (None, '', ' ') and isinstance(v, (int, float, str)) and str(v).replace('.', '', 1).isdigit()]
+                avg = sum(nums) / len(nums) if nums else ''
+                value = format_value_by_rule(key, avg)
+            else:
+                value = format_value_by_rule(key, value)
             sheet_data[key] = value
             logger.debug(f"提取字段: {key}，单元格: {cell}，值: {value}")
             if value == '' or value == ' ':
                 logger.warning(f"数据可能出错 {sheet.title} {key}")
                 raise Exception(f"数据可能出错 {sheet.title} {key}")
-        data[sheet.title] = sheet_data    
+        data[sheet.title] = sheet_data
     logger.info(f"完成Excel数据提取: {excel_path}")
     return data
 
 def replace_placeholder_in_paragraph(paragraph, data):
     full_text = ''.join(run.text for run in paragraph.runs)
+    # for key, value in data.items():
+    #     placeholder = f"{{{{{key}}}}}"
+    #     if placeholder in full_text:
+    #         logger.debug(f"替换占位符: {placeholder} -> {value}")
+    #     full_text = full_text.replace(placeholder, str(value))
+    # if paragraph.runs:
+    #     paragraph.runs[0].text = full_text
+    #     for run in paragraph.runs[1:]:
+    #         run.text = ''
+    # 先处理带数字的占位符，如 {{测区平均值1}}
+    def replace_match(match):
+        key = match.group(1)
+        idx = match.group(2)
+        if key in data and isinstance(data[key], list):
+            try:
+                # idx是1起始，Python下标是0起始
+                _data = data[key][int(idx) - 1]
+                if _data is None:
+                    _data = "/"
+                return str(_data)
+            except (IndexError, ValueError):
+                return ''
+        # 如果不是数组，或者key不存在，返回原样
+        return match.group(0)
+
+    # 替换所有 {{字段名数字}} 占位符
+    full_text = re.sub(r'\{\{([\u4e00-\u9fa5A-Za-z_]+?)(\d+)\}\}', replace_match, full_text)
+
+    # 再处理普通的 {{字段名}} 占位符
     for key, value in data.items():
         placeholder = f"{{{{{key}}}}}"
         if placeholder in full_text:
             logger.debug(f"替换占位符: {placeholder} -> {value}")
-        full_text = full_text.replace(placeholder, str(value))
+        if isinstance(value, list):
+            value_str = ', '.join(str(v) for v in value)
+        else:
+            _data = value
+            if _data is None:
+                _data = "/"
+            value_str = str(_data)
+        full_text = full_text.replace(placeholder, value_str)
+
     if paragraph.runs:
         paragraph.runs[0].text = full_text
         for run in paragraph.runs[1:]:
             run.text = ''
-
 def fill_word_template(data, output_path):
     logger.info(f"正在填充Word模板: {output_path}")
     doc = Document(word_template_path)
@@ -140,7 +231,7 @@ def main():
             except Exception as e:
                 logger.error(f"读取Excel数据失败: {excel_path}，错误信息: {e}")
                 continue
-
+            
             for sheet_name in datas:
                 safe_sheet_name = clean_filename(sheet_name)
                 word_name = f"{_filename}_{safe_sheet_name}.docx"
