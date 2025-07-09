@@ -62,7 +62,7 @@ fields = {
     '墩柱': 'A21',
     '测区平均值': gen_cells('S', 21, 30),
     '测区声速代表值': gen_cells('Z', 21, 30),
-    '平测声速':'Z16',
+    '平测声速':'Z17',
     '修正为对测声速': gen_cells('AA', 21, 30),
     '测区强度代表值': gen_cells('AB', 21, 30),
     '构件强度推定值': 'AD21',
@@ -243,6 +243,7 @@ def main():
                     logger.error(f"生成Word失败: {output_path}，错误信息: {e}")
 
 #  python3 -m PyInstaller -F main.py --hidden-import=pyexcel_io.writers --hidden-import=pyexcel_xls --hidden-import=pyexcel_xlsx
+#  py -m PyInstaller -F main.py --hidden-import=pyexcel_io.writers --hidden-import=pyexcel_xls --hidden-import=pyexcel_xlsx
 
 if __name__ == '__main__':
     try:
